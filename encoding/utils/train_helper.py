@@ -11,7 +11,6 @@
 import numpy as np
 import torch
 import torch.nn as nn
-
 #from ..nn import SyncBatchNorm
 from torch.nn.modules.batchnorm import _BatchNorm
 
@@ -23,6 +22,7 @@ class MixUpWrapper(object):
         self.dataloader = dataloader
         self.num_classes = num_classes
         self.device = device
+        self.sampler = dataloader.sampler
 
     def mixup_loader(self, loader):
         def mixup(alpha, num_classes, data, target):

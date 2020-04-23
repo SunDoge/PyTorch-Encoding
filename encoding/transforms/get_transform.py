@@ -1,13 +1,15 @@
-##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-## Created by: Hang Zhang
-## Email: zhanghang0704@gmail.com
-## Copyright (c) 2020
-##
-## LICENSE file in the root directory of this source tree 
-##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+# Created by: Hang Zhang
+# Email: zhanghang0704@gmail.com
+# Copyright (c) 2020
+#
+# LICENSE file in the root directory of this source tree 
+# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 import torch
 from torchvision.transforms import *
+
 from .transforms import *
+
 
 def get_transform(dataset, base_size=None, crop_size=224, rand_aug=False, etrans=True, **kwargs):
     normalize = Normalize(mean=[0.485, 0.456, 0.406],
@@ -26,7 +28,7 @@ def get_transform(dataset, base_size=None, crop_size=224, rand_aug=False, etrans
             val_transforms.extend([
                 ECenterCrop(crop_size),
             ])
-            
+    
         else:
             train_transforms.extend([
                 RandomResizedCrop(crop_size),

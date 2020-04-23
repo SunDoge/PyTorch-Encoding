@@ -7,15 +7,15 @@
 ## LICENSE file in the root directory of this source tree 
 ##+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
-import os
 import argparse
-from tqdm import tqdm
-
-import torch
-import torch.nn as nn
+import os
 
 import encoding
-from encoding.utils import (accuracy, AverageMeter, MixUpWrapper, LR_Scheduler)
+import torch
+import torch.nn as nn
+from encoding.utils import AverageMeter, LR_Scheduler, MixUpWrapper, accuracy
+from tqdm import tqdm
+
 
 class Options():
     def __init__(self):
@@ -68,14 +68,14 @@ def main():
         torch.cuda.manual_seed(args.seed)
     # init dataloader
     _, transform_val = encoding.transforms.get_transform(args.dataset, args.base_size, args.crop_size)
-    valset = encoding.datasets.get_dataset(args.dataset, root=os.path.expanduser('~/.encoding/data'),
+    valset = encoding.datasets.get_dataset(args.dataset, root=os.path.expanduser('~/data'),
                                            transform=transform_val, train=False, download=True)
     val_loader = torch.utils.data.DataLoader(
         valset, batch_size=args.batch_size, shuffle=False,
         num_workers=args.workers, pin_memory=True if args.cuda else False)
-    
+
     # init the model
-    model_kwargs = {'pretrained': True}
+    model_kwargs = {'pretrained': False}
 
     if args.rectify:
         model_kwargs['rectified_conv'] = True
@@ -130,4 +130,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

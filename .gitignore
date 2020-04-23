@@ -11,3 +11,5 @@ encoding.egg-info/
 *.o
 *.so
 *.ninja*
+gluonvision_pretrain/
+experiments/recognition/runs/

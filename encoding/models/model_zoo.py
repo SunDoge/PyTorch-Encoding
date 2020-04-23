@@ -1,8 +1,8 @@
 # pylint: disable=wildcard-import, unused-wildcard-import
 
 from .backbone import *
-from .sseg import *
 from .deepten import *
+from .sseg import *
 
 __all__ = ['model_list', 'get_model']
 
@@ -21,6 +21,11 @@ models = {
     'resnet101s': resnet101s,
     'resnet152s': resnet152s,
     'resnet50d': resnet50d,
+    'resnet50d_avd': resnet50d_avd,
+    'resnet50d_avdfast': resnet50d_avdfast,
+    'resnet50_avgdown': resnet50_avgdown,
+    'resnet50_avgdown_avdfast': resnet50_avgdown_avdfast,
+    'resnet50_avgdown_avd': resnet50_avgdown_avd,
     'resnext50_32x4d': resnext50_32x4d,
     'resnext101_32x8d': resnext101_32x8d,
     # other segmentation backbones

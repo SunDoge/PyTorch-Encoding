@@ -12,7 +12,7 @@ import io
 import os
 import subprocess
 
-from setuptools import setup, find_packages
+from setuptools import find_packages, setup
 
 cwd = os.path.dirname(os.path.abspath(__file__))
 
@@ -38,8 +38,6 @@ requirements = [
     'tqdm',
     'nose',
     'portalocker',
-    'torch>=1.4.0',
-    'torchvision>=0.5.0',
     'Pillow',
     'scipy',
     'requests',
