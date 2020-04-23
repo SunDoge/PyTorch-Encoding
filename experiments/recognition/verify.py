@@ -14,6 +14,7 @@ import encoding
 import torch
 import torch.nn as nn
 from encoding.utils import AverageMeter, LR_Scheduler, MixUpWrapper, accuracy
+from mmcv.runner import load_checkpoint
 from tqdm import tqdm
 
 
@@ -93,15 +94,17 @@ def main():
     if args.verify:
         if os.path.isfile(args.verify):
             print("=> loading checkpoint '{}'".format(args.verify))
-            model.module.load_state_dict(torch.load(args.verify))
+            load_checkpoint(model, args.verify, strict=True)
+            # model.module.load_state_dict(torch.load(args.verify))
         else:
             raise RuntimeError ("=> no verify checkpoint found at '{}'".\
                 format(args.verify))
     elif args.resume is not None:
         if os.path.isfile(args.resume):
             print("=> loading checkpoint '{}'".format(args.resume))
-            checkpoint = torch.load(args.resume)
-            model.module.load_state_dict(checkpoint['state_dict'])
+            load_checkpoint(model, args.resume, strict=True)
+            # checkpoint = torch.load(args.resume)
+            # model.module.load_state_dict(checkpoint['state_dict'])
         else:
             raise RuntimeError ("=> no resume checkpoint found at '{}'".\
                 format(args.resume))
