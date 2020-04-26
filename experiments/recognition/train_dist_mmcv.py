@@ -133,14 +133,16 @@ def batch_processor(model, data, train_mode, criterion, mixup):
     if not mixup:
         label = label.cuda(non_blocking=True)
     pred = model(img)
-    loss = criterion(pred, label)
     log_vars = OrderedDict()
-    log_vars['loss'] = loss.item()
-    if not train_mode:
-        acc_top1, acc_top5 = accuracy(pred, label, topk=(1, 5))
+    if train_mode:
+        loss = criterion(pred, label)
+        log_vars['loss'] = loss.item()
+        outputs = dict(loss=loss, log_vars=log_vars, num_samples=img.size(0))
+    else:
+        acc_top1, acc_top5 = accuracy(pred.cpu(), label.cpu(), topk=(1, 5))
         log_vars['acc_top1'] = acc_top1.item()
         log_vars['acc_top5'] = acc_top5.item()
-    outputs = dict(loss=loss, log_vars=log_vars, num_samples=img.size(0))
+        outputs = dict(log_vars=log_vars, num_samples=img.size(0))
     return outputs
 
 
