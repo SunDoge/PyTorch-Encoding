@@ -11,16 +11,17 @@ import os
 import random
 from collections import OrderedDict
 
-import encoding
 import numpy as np
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.nn as nn
-from encoding.nn import LabelSmoothing, NLLMultiLabelSmooth
-from encoding.utils import accuracy
 from mmcv.runner import DistSamplerSeedHook, Runner, get_dist_info, init_dist
 from torch.nn.parallel import DistributedDataParallel
+
+import encoding
+from encoding.nn import LabelSmoothing, NLLMultiLabelSmooth
+from encoding.utils import accuracy
 
 
 class Options():
@@ -60,11 +61,11 @@ class Options():
                             help='batch size for training (default: 128)')
         parser.add_argument('--test-batch-size', type=int, default=256, metavar='N',
                             help='batch size for testing (default: 256)')
-        parser.add_argument('--epochs', type=int, default=270, metavar='N',
+        parser.add_argument('--epochs', type=int, default=200, metavar='N',
                             help='number of epochs to train (default: 600)')
         parser.add_argument('--start_epoch', type=int, default=0,
                             metavar='N', help='the epoch number to start (default: 1)')
-        parser.add_argument('--workers', type=int, default=4,
+        parser.add_argument('--workers', type=int, default=8,
                             metavar='N', help='dataloader threads')
         # optimizer
         parser.add_argument('--lr', type=float, default=0.025, metavar='LR',
@@ -127,11 +128,8 @@ def set_random_seed(seed):
 
 
 def batch_processor(model, data, train_mode, criterion, mixup):
-    if train_mode:
-        mixup = False
     img, label = data
-    if not mixup:
-        label = label.cuda(non_blocking=True)
+    label = label.cuda(non_blocking=True)
     pred = model(img)
     log_vars = OrderedDict()
     if train_mode:
@@ -205,9 +203,9 @@ def torch_dist_sum(gpu, *args):
     pending_res = []
     for arg in args:
         if isinstance(arg, torch.Tensor):
-            tensor_arg = arg.clone().reshape(1).detach().cuda(gpu)
+            tensor_arg = arg.clone().reshape(-1).detach().cuda(gpu)
         else:
-            tensor_arg = torch.tensor(arg).reshape(1).cuda(gpu)
+            tensor_arg = torch.tensor(arg).reshape(-1).cuda(gpu)
         tensor_args.append(tensor_arg)
         pending_res.append(torch.distributed.all_reduce(
             tensor_arg, group=process_group, async_op=True))
@@ -289,9 +287,9 @@ def main_worker(args):
     else:
         criterion = nn.CrossEntropyLoss()
 
+    model.cuda(args.gpu)
     criterion.cuda(args.gpu)
-    model = DistributedDataParallel(
-        model.cuda(), device_ids=[torch.cuda.current_device()])
+    model = DistributedDataParallel(model, device_ids=[args.gpu])
 
     # criterion and optimizer
     if args.no_bn_wd:

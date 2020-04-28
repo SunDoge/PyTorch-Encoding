@@ -1,27 +1,18 @@
-# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-# Created by: Hang Zhang
-# Email: zhanghang0704@gmail.com
-# Copyright (c) 2020
-##
-# LICENSE file in the root directory of this source tree
-# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-
 import argparse
-import logging
 import os
-import random
 import time
 
-import encoding
 import numpy as np
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.nn as nn
+from torch.nn.parallel import DistributedDataParallel
+from tqdm import tqdm
+
+import encoding
 from encoding.nn import LabelSmoothing, NLLMultiLabelSmooth
 from encoding.utils import AverageMeter, LR_Scheduler, MixUpWrapper, accuracy
-from mmcv.runner import DistSamplerSeedHook, Runner, get_dist_info, init_dist
-from torch.nn.parallel import DistributedDataParallel
 
 
 class Options():
@@ -29,19 +20,19 @@ class Options():
         # data settings
         parser = argparse.ArgumentParser(description='Deep Encoding')
         parser.add_argument('--dataset', type=str, default='imagenet',
-                            help='training dataset (default: cifar10)')
+                            help='training dataset (default: imagenet)')
         parser.add_argument('--base-size', type=int, default=None,
                             help='base image size')
         parser.add_argument('--crop-size', type=int, default=224,
                             help='crop image size')
-        parser.add_argument('--label-smoothing', type=float, default=0.1,
+        parser.add_argument('--label-smoothing', type=float, default=0.0,
                             help='label-smoothing (default eta: 0.0)')
-        parser.add_argument('--mixup', type=float, default=0.2,
+        parser.add_argument('--mixup', type=float, default=0.0,
                             help='mixup (default eta: 0.0)')
         parser.add_argument('--rand-aug', action='store_true',
                             default=False, help='random augment')
         # model params
-        parser.add_argument('--model', type=str, default='resnet50',
+        parser.add_argument('--model', type=str, default='densenet',
                             help='network model type (default: densenet)')
         parser.add_argument('--rectify', action='store_true',
                             default=False, help='rectify convolution')
@@ -61,18 +52,18 @@ class Options():
                             help='batch size for training (default: 128)')
         parser.add_argument('--test-batch-size', type=int, default=256, metavar='N',
                             help='batch size for testing (default: 256)')
-        parser.add_argument('--epochs', type=int, default=270, metavar='N',
+        parser.add_argument('--epochs', type=int, default=120, metavar='N',
                             help='number of epochs to train (default: 600)')
         parser.add_argument('--start_epoch', type=int, default=0,
                             metavar='N', help='the epoch number to start (default: 1)')
-        parser.add_argument('--workers', type=int, default=4,
+        parser.add_argument('--workers', type=int, default=8,
                             metavar='N', help='dataloader threads')
         # optimizer
         parser.add_argument('--lr', type=float, default=0.025, metavar='LR',
                             help='learning rate (default: 0.1)')
         parser.add_argument('--lr-scheduler', type=str, default='cos',
                             help='learning rate scheduler (default: cos)')
-        parser.add_argument('--warmup-epochs', type=int, default=5,
+        parser.add_argument('--warmup-epochs', type=int, default=0,
                             help='number of warmup epochs (default: 0)')
         parser.add_argument('--momentum', type=float, default=0.9,
                             metavar='M', help='SGD momentum (default: 0.9)')
@@ -91,61 +82,22 @@ class Options():
         # distributed
         parser.add_argument('--world-size', default=1, type=int,
                             help='number of nodes for distributed training')
-        parser.add_argument('--local_rank', default=0, type=int,
+        parser.add_argument('--rank', default=0, type=int,
                             help='node rank for distributed training')
         parser.add_argument('--dist-url', default='tcp://localhost:23456', type=str,
                             help='url used to set up distributed training')
         parser.add_argument('--dist-backend', default='nccl', type=str,
                             help='distributed backend')
+        # evaluation option
+        parser.add_argument('--eval', action='store_true', default=False,
+                            help='evaluating')
+        parser.add_argument('--export', type=str, default=None,
+                            help='put the path to resuming file if needed')
         self.parser = parser
 
     def parse(self):
         args = self.parser.parse_args()
-        if 'LOCAL_RANK' not in os.environ:
-            os.environ['LOCAL_RANK'] = str(args.local_rank)
         return args
-
-
-def get_root_logger(log_level=logging.INFO):
-    logger = logging.getLogger()
-    if not logger.hasHandlers():
-        logging.basicConfig(
-            format='%(asctime)s - %(levelname)s - %(message)s',
-            level=log_level)
-    rank, _ = get_dist_info()
-    if rank != 0:
-        logger.setLevel('ERROR')
-    return logger
-
-
-def set_random_seed(seed):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    os.environ['PYTHONHASHSEED'] = str(seed)
-
-
-def main():
-    args = Options().parse()
-    torch.backends.cudnn.benchmark = True
-    if mp.get_start_method(allow_none=True) is None:
-        mp.set_start_method('spawn')
-    init_dist('pytorch', backend=args.dist_backend)
-    logger = get_root_logger('INFO')
-    args.lr = args.lr * dist.get_world_size()
-    # set random seeds
-    if args.seed is not None:
-        logger.info('Set random seed to {}'.format(args.seed))
-        set_random_seed(args.seed)
-    main_worker(args, logger)
-
-
-# global variable
-best_pred = 0.0
-acclist_train = []
-acclist_val = []
 
 
 def torch_dist_sum(gpu, *args):
@@ -154,9 +106,9 @@ def torch_dist_sum(gpu, *args):
     pending_res = []
     for arg in args:
         if isinstance(arg, torch.Tensor):
-            tensor_arg = arg.clone().reshape(1).detach().cuda(gpu)
+            tensor_arg = arg.clone().reshape(-1).detach().cuda(gpu)
         else:
-            tensor_arg = torch.tensor(arg).reshape(1).cuda(gpu)
+            tensor_arg = torch.tensor(arg).reshape(-1).cuda(gpu)
         tensor_args.append(tensor_arg)
         pending_res.append(torch.distributed.all_reduce(
             tensor_arg, group=process_group, async_op=True))
@@ -165,25 +117,43 @@ def torch_dist_sum(gpu, *args):
     return tensor_args
 
 
-def main_worker(args):
-    args.gpu = args.local_rank
-    # args.rank = args.rank * ngpus_per_node + gpu
-    print('rank: {} / {}'.format(args.local_rank, dist.get_world_size()))
+def main():
+    args = Options().parse()
+    ngpus_per_node = torch.cuda.device_count()
+    args.world_size = ngpus_per_node * args.world_size
+    args.lr = args.lr * args.world_size
+    mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
+
+
+# global variable
+best_pred = 0.0
+acclist_train = []
+acclist_val = []
+
+
+def main_worker(gpu, ngpus_per_node, args):
+    args.gpu = gpu
+    args.rank = args.rank * ngpus_per_node + gpu
+    print('rank: {} / {}'.format(args.rank, args.world_size))
+    dist.init_process_group(backend=args.dist_backend,
+                            init_method=args.dist_url,
+                            world_size=args.world_size,
+                            rank=args.rank)
+    torch.cuda.set_device(args.gpu)
     # init the args
     global best_pred, acclist_train, acclist_val
 
     if args.gpu == 0:
         print(args)
-
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed(args.seed)
     # init dataloader
     transform_train, transform_val = encoding.transforms.get_transform(
         args.dataset, args.base_size, args.crop_size, args.rand_aug)
-    trainset = encoding.datasets.get_dataset(
-        args.dataset, root=os.path.expanduser('~/data'),
-        transform=transform_train, train=True, download=True)
-    valset = encoding.datasets.get_dataset(
-        args.dataset, root=os.path.expanduser('~/data'),
-        transform=transform_val, train=False, download=True)
+    trainset = encoding.datasets.get_dataset(args.dataset, root=os.path.expanduser('~/data'),
+                                             transform=transform_train, train=True, download=True)
+    valset = encoding.datasets.get_dataset(args.dataset, root=os.path.expanduser('~/data'),
+                                           transform=transform_val, train=False, download=True)
 
     train_sampler = torch.utils.data.distributed.DistributedSampler(trainset)
     train_loader = torch.utils.data.DataLoader(
@@ -222,9 +192,8 @@ def main_worker(args):
         from functools import partial
         from encoding.nn import reset_dropblock
         nr_iters = (args.epochs - args.warmup_epochs) * len(train_loader)
-        apply_drop_prob = partial(
-            reset_dropblock, args.warmup_epochs * len(train_loader),
-            nr_iters, 0.0, args.dropblock_prob)
+        apply_drop_prob = partial(reset_dropblock, args.warmup_epochs*len(train_loader),
+                                  nr_iters, 0.0, args.dropblock_prob)
         model.apply(apply_drop_prob)
 
     if args.gpu == 0:
@@ -238,9 +207,9 @@ def main_worker(args):
     else:
         criterion = nn.CrossEntropyLoss()
 
+    model.cuda(args.gpu)
     criterion.cuda(args.gpu)
-    model = DistributedDataParallel(
-        model.cuda(), device_ids=[torch.cuda.current_device()])
+    model = DistributedDataParallel(model, device_ids=[args.gpu])
 
     # criterion and optimizer
     if args.no_bn_wd:
@@ -280,11 +249,11 @@ def main_worker(args):
             model.module.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
             if args.gpu == 0:
-                print("=> loaded checkpoint '{}' (epoch {})".format(
-                    args.resume, checkpoint['epoch']))
+                print("=> loaded checkpoint '{}' (epoch {})"
+                      .format(args.resume, checkpoint['epoch']))
         else:
-            raise RuntimeError(
-                "=> no resume checkpoint found at '{}'".format(args.resume))
+            raise RuntimeError("=> no resume checkpoint found at '{}'".
+                               format(args.resume))
     scheduler = LR_Scheduler(args.lr_scheduler,
                              base_lr=args.lr,
                              num_epochs=args.epochs,
@@ -338,6 +307,15 @@ def main_worker(args):
         # sum all
         sum1, cnt1, sum5, cnt5 = torch_dist_sum(
             args.gpu, top1.sum, top1.count, top5.sum, top5.count)
+
+        if args.eval:
+            if args.gpu == 0:
+                top1_acc = sum(sum1) / sum(cnt1)
+                top5_acc = sum(sum5) / sum(cnt5)
+                print('Validation: Top1: %.3f | Top5: %.3f' %
+                      (top1_acc, top5_acc))
+            return
+
         if args.gpu == 0:
             top1_acc = sum(sum1) / sum(cnt1)
             top5_acc = sum(sum5) / sum(cnt5)
@@ -357,16 +335,33 @@ def main_worker(args):
                 'acclist_val': acclist_val,
             }, args=args, is_best=is_best)
 
+    if args.export:
+        if args.gpu == 0:
+            torch.save(model.module.state_dict(), args.export + '.pth')
+        return
+
+    if args.eval:
+        validate(args.start_epoch)
+        return
+
     for epoch in range(args.start_epoch, args.epochs):
         tic = time.time()
         train(epoch)
-        if epoch % 10 == 0:
+        if epoch % 10 == 0:  # or epoch == args.epochs-1:
             validate(epoch)
         elapsed = time.time() - tic
         if args.gpu == 0:
             print(f'Epoch: {epoch}, Time cost: {elapsed}')
 
-    validate(epoch)
+    if args.gpu == 0:
+        encoding.utils.save_checkpoint({
+            'epoch': args.epochs-1,
+            'state_dict': model.module.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            'best_pred': best_pred,
+            'acclist_train': acclist_train,
+            'acclist_val': acclist_val,
+        }, args=args, is_best=False)
 
 
 if __name__ == "__main__":
